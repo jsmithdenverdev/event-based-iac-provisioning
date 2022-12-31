@@ -2,7 +2,20 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 
 Resources:
-  HelloWorldFunction:
+  ###################
+  #       API       #
+  ###################
+  AccountsApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Auth:
+        ApiKeyRequired: true
+
+  ####################
+  #      Lambda      #
+  ####################
+  CreateAccountFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: .
@@ -11,19 +24,54 @@ Resources:
       Architectures:
         - x86_64
       Events:
-        HelloWorld:
+        Default:
           Type: Api
           Properties:
-            Path: /hello
-            Method: get
+            Path: /
+            Method: POST
+            RestApiId: !Ref AccountsApi
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Select [1, !Split ["/", !GetAtt AccountTable.Arn]]
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt InfrastructureQueue.QueueName
       Environment:
         Variables:
           NODE_OPTIONS: --enable-source-maps
+          TABLE_NAME: !Select [1, !Split ["/", !GetAtt AccountTable.Arn]]
+          INFRASTRUCTURE_QUEUE_URL: !Ref InfrastructureQueue
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
-        Minify: false
+        Minify: true
         Target: "es2020"
         Sourcemap: true
         EntryPoints:
           - ./src/functions/create-account.ts
+
+  ####################
+  #      Dynamo      #
+  ####################
+  AccountTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  ###################
+  #       SQS       #
+  ###################
+  InfrastructureQueue:
+    Type: AWS::SQS::Queue
+
+Outputs:
+  CreateAccountEndpoint:
+    Description: "API Gateway endpoint URL for Prod environment for TwilioCallbackFunction"
+    Value: !Sub "https://${AccountsApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
